@@ -1,0 +1,19 @@
+# telemetry_integration_otel.yaml
+# Run this locally using an isolated OTEL Collector binary:
+# ./otelcol --config tests/integration_test_otel.yaml
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "localhost:4317"
+
+exporters:
+  logging:
+    loglevel: debug
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [logging]

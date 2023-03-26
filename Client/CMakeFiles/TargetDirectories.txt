@@ -1,3 +1,0 @@
-/home/max/Projects/TelemetryAgent/cryptClient/CMakeFiles/rebuild_cache.dir
-/home/max/Projects/TelemetryAgent/cryptClient/CMakeFiles/Client.dir
-/home/max/Projects/TelemetryAgent/cryptClient/CMakeFiles/edit_cache.dir

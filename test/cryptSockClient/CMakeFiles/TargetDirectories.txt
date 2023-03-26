@@ -1,3 +1,0 @@
-/home/max/Projects/TelemetryAgent/test/cryptSockClient/CMakeFiles/rebuild_cache.dir
-/home/max/Projects/TelemetryAgent/test/cryptSockClient/CMakeFiles/CryptClientSock.dir
-/home/max/Projects/TelemetryAgent/test/cryptSockClient/CMakeFiles/edit_cache.dir

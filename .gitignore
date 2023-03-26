@@ -1,0 +1,15 @@
+# Build Outputs
+bin/
+obj/
+
+# Local Package Manager
+.vcpkg/
+
+# Secrets & Private Keys
+certs/
+*.pem
+*.key
+
+# IDEs
+.idea/
+.vscode/

@@ -1,3 +1,0 @@
-/home/max/Projects/TelemetryAgent/asyncServer/CMakeFiles/rebuild_cache.dir
-/home/max/Projects/TelemetryAgent/asyncServer/CMakeFiles/Async.dir
-/home/max/Projects/TelemetryAgent/asyncServer/CMakeFiles/edit_cache.dir

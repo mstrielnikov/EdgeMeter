@@ -1,1 +1,0 @@
-/usr/bin/c++     CMakeFiles/CryptClientSock.dir/cClient.cpp.o  -o CryptClientSock /usr/lib/libcrypto.so /usr/lib/libssl.so 

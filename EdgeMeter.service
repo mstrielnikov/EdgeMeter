@@ -1,0 +1,19 @@
+[Unit]
+Description=EdgeMeter Daemon
+After=network.target
+
+[Service]
+Type=simple
+# Assumes deployed executable location accurately maps locally
+ExecStart=/opt/EdgeMeter/bin/EdgeMeter
+WorkingDirectory=/opt/EdgeMeter
+
+# Secure operational signal binding
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
