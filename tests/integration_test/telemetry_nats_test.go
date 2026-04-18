@@ -62,7 +62,7 @@ func runNATSTest(t *testing.T, useTLS bool) {
 							reader.ReadString('\n')
 
 							metrics, err := new(pmetric.JSONUnmarshaler).UnmarshalMetrics(payload)
-							if err == nil && metrics.ResourceMetrics().Len() > 0 {
+							if err == nil && validateAnyOTLPMetric(t, metrics) {
 								select {
 								case successCh <- true:
 								default:

@@ -1,66 +1,85 @@
-#include "NatsExporter.hpp"
-#include "../../core/Logger.hpp"
-#include "../OtlpTemplateEngine.hpp"
+#include <edgemeter/telemetry/exporters/NatsExporter.hpp>
 
-#ifdef USE_NATS
-#ifndef __EMSCRIPTEN__
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include "../../net/tls/TlsConnection.hpp"
-#endif
-#endif
+#include <format>
 
 namespace telemetry {
 
-NatsExporter::NatsExporter(core::Config config) 
-    : config_(std::move(config)) {}
-
-void NatsExporter::Observe(const std::string& name, double value, const std::map<std::string, std::string>& attributes) {
+// ---------------------------------------------------------------------------
+// Plain (TCP) Implementation
+// ---------------------------------------------------------------------------
+void NatsExporter<Plain>::Observe(std::string_view name, double value, std::span<const sys::Attribute> attributes) {
     std::string payload = OtlpTemplateEngine::render_payload(config_, name, value, attributes);
-    if (payload.empty()) {
-        LOG_ERROR("NATS Exporter aborted: Generated payload is empty for metric '" + name + "'");
-        return; 
-    }
-    LOG_DEBUG("NATS Emitting Formatted Canonical OTLP: \n" + payload);
+    if (payload.empty()) return;
 
-#ifdef USE_NATS
-#ifndef __EMSCRIPTEN__
-    // Raw native integration targeting NATS servers safely dynamically without nats-c libs!
+    constexpr std::string_view nats_connect_req = "CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":false}\r\n";
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock >= 0) {
-        struct sockaddr_in serv_addr;
-        serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port = htons(config_.nats_port);
-        inet_pton(AF_INET, config_.nats_host.c_str(), &serv_addr.sin_addr);
-        
-        if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) >= 0) {
-#ifdef USE_TLS
-            net::TlsConnection<net::Unauthenticated> unauth_conn(sock);
-            auto auth_res = unauth_conn.authenticate_as_client(config_);
-            if (auth_res.is_ok()) {
-                auto& tls_conn = auth_res.unwrap();
-                constexpr std::string_view connect_req = "CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":true}\r\n";
-                tls_conn.send(std::string(connect_req));
-                std::string pub_req = "PUB " + config_.nats_topic + " " + std::to_string(payload.size()) + "\r\n" + payload + "\r\n";
-                tls_conn.send(pub_req);
-            } else {
-                LOG_ERROR("Failed to establish NATS TLS Typestate: " + auth_res.unwrap_err());
-            }
-#else
-            // Emit lightweight Protocol Connect
-            constexpr std::string_view connect_req = "CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":false}\r\n";
-            send(sock, connect_req.data(), connect_req.size(), 0);
-            
-            // Emit PUB string length frames securely cleanly
-            std::string pub_req = "PUB " + config_.nats_topic + " " + std::to_string(payload.size()) + "\r\n" + payload + "\r\n";
-            send(sock, pub_req.c_str(), pub_req.size(), 0);
-#endif
+    if (sock < 0) return;
+
+    struct sockaddr_in serv_addr{};
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port   = htons(static_cast<uint16_t>(config_.nats.port));
+    inet_pton(AF_INET, config_.nats.host.data(), &serv_addr.sin_addr);
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&serv_addr), sizeof(serv_addr)) >= 0) {
+        std::string hdr = std::format("PUB {} {}\r\n", config_.nats.topic, payload.size());
+        std::string_view payload_sv(payload);
+        std::string_view end_sv("\r\n", 2);
+
+        if (send(sock, nats_connect_req.data(), nats_connect_req.size(), 0) < 0 ||
+            send(sock, hdr.data(), hdr.size(), 0) < 0 ||
+            send(sock, payload_sv.data(), payload_sv.size(), 0) < 0 ||
+            send(sock, end_sv.data(), end_sv.size(), 0) < 0) {
+            core::Logger::Error("NATS Exporter failed to send TCP payload");
         }
-        close(sock);
+    } else {
+        core::Logger::Warn("NATS Exporter: connection refused, will retry");
     }
-#endif
-#endif
+    close(sock);
+}
+
+// ---------------------------------------------------------------------------
+// Secure (TLS) Implementation
+// ---------------------------------------------------------------------------
+void NatsExporter<Secure>::Observe(std::string_view name, double value, std::span<const sys::Attribute> attributes) {
+    std::string payload = OtlpTemplateEngine::render_payload(config_, name, value, attributes);
+    if (payload.empty()) return;
+
+    constexpr std::string_view nats_connect_req = "CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":true}\r\n";
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return;
+
+    struct sockaddr_in serv_addr{};
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port   = htons(static_cast<uint16_t>(config_.nats.port));
+    inet_pton(AF_INET, config_.nats.host.data(), &serv_addr.sin_addr);
+
+    if (connect(sock, reinterpret_cast<struct sockaddr*>(&serv_addr), sizeof(serv_addr)) >= 0) {
+        std::string hdr = std::format("PUB {} {}\r\n", config_.nats.topic, payload.size());
+        std::string_view payload_sv(payload);
+        std::string_view end_sv("\r\n", 2);
+
+        net::TlsConnection<net::Unauthenticated> unauth_conn(sock);
+        auto auth_res = unauth_conn.authenticate_as_client(config_);
+        if (auth_res.has_value()) {
+            auto& tls_conn = auth_res.value();
+            if (!tls_conn.send(nats_connect_req).has_value() ||
+                !tls_conn.send(hdr).has_value() ||
+                !tls_conn.send(payload_sv).has_value() ||
+                !tls_conn.send(end_sv).has_value()) {
+                core::Logger::Error("NATS TLS Exporter failed to send data");
+            }
+        } else {
+            core::Logger::Error("NATS TLS handshake failed: " + std::string(auth_res.error()));
+        }
+    } else {
+        core::Logger::Warn("NATS Exporter: connection refused, will retry");
+    }
+    close(sock);
 }
 
 } // namespace telemetry

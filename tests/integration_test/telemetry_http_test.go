@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
-func runGRPCTest(t *testing.T, expectedTLS bool, makeFlags []string) {
+func runOtelHttpTest(t *testing.T, expectedTLS bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -18,10 +18,10 @@ func runGRPCTest(t *testing.T, expectedTLS bool, makeFlags []string) {
 
 	otlpMux := http.NewServeMux()
 	otlpMux.HandleFunc("/v1/metrics", func(w http.ResponseWriter, r *http.Request) {
-		t.Logf("GRPC: Connection request handled actively securely")
+		t.Logf("HTTP: Connection request handled actively securely")
 		body, _ := io.ReadAll(r.Body)
 		metrics, err := new(pmetric.JSONUnmarshaler).UnmarshalMetrics(body)
-		if err == nil && metrics.ResourceMetrics().Len() > 0 {
+		if err == nil && validateAnyOTLPMetric(t, metrics) {
 			select {
 			case successCh <- true:
 			default:
@@ -42,16 +42,16 @@ func runGRPCTest(t *testing.T, expectedTLS bool, makeFlags []string) {
 
 	select {
 	case <-ctx.Done():
-		t.Fatalf("Timeout: gRPC/HTTP OTLP natively failed structurally asserting payloads!")
+		t.Fatalf("Timeout: HTTP OTLP natively failed structurally asserting payloads!")
 	case <-successCh:
-		t.Logf("✓ Verified explicit HTTP/gRPC Native Metrics (TLS: %v)", expectedTLS)
+		t.Logf("✓ Verified explicit HTTP OTLP Native Metrics (TLS: %v)", expectedTLS)
 	}
 }
 
-func TestGRPC_NoTLS(t *testing.T) {
-	runGRPCTest(t, false, []string{"USE_WEBSOCKETS=0", "USE_GRPC=1", "USE_NATS=0", "USE_TLS=0"})
+func TestHttp_NoTLS(t *testing.T) {
+	runOtelHttpTest(t, false)
 }
 
-func TestGRPC_TLS(t *testing.T) {
-	runGRPCTest(t, true, []string{"USE_WEBSOCKETS=0", "USE_GRPC=1", "USE_NATS=0", "USE_TLS=1"})
+func TestHttp_TLS(t *testing.T) {
+	runOtelHttpTest(t, true)
 }

@@ -1,52 +1,56 @@
-#include "AsyncServer.hpp"
-#include "../core/Logger.hpp"
+#include <edgemeter/net/AsyncServer.hpp>
+#include <edgemeter/core/Logger.hpp>
 
-#ifndef __EMSCRIPTEN__
 #include <thread>
 #include <chrono>
-#else
-#include <emscripten.h>
-#endif
 
 namespace net {
 
-AsyncServer::AsyncServer(uint16_t port) : port_(port) {}
+AsyncServer::AsyncServer(uint16_t port) {
+    (void)port;
+}
 
 AsyncServer::~AsyncServer() {
     stop();
 }
 
 core::Result<void> AsyncServer::start() {
-    if (is_running_) {
-        return core::Result<void>::Err("Server is already running");
+    if (loop_thread_.joinable()) {
+        return std::unexpected{"Server is already running"};
     }
-    is_running_ = true;
+    loop_thread_ = std::jthread([this](std::stop_token stoken) {
+        this->event_loop(stoken);
+    });
 
-#ifndef __EMSCRIPTEN__
-    std::thread([this]() {
-        this->event_loop();
-    }).detach();
-#else
-    // WebAssembly requires yielding to the browser event loop
-    // Typically integrated via emscripten_set_main_loop
-    LOG_INFO("[WASM] Listening loop initialized");
-#endif
-
-    return core::Result<void>::Ok();
+    return {};
 }
 
 core::Result<void> AsyncServer::stop() {
-    is_running_ = false;
-    return core::Result<void>::Ok();
+    bool stopped = false;
+    if (loop_thread_.joinable()) {
+        loop_thread_.request_stop();
+        loop_thread_.join();
+        stopped = true;
+    }
+
+    if (stopped || !active_connections_.empty()) {
+        // Drain all active connections via variant visit — no vtable dispatch
+        for (auto& conn : active_connections_) {
+            std::visit([](auto& c) {
+                if (c.is_alive()) c.close();
+            }, conn);
+        }
+        active_connections_.clear();
+        core::Logger::Info("AsyncServer gracefully stopped and connections drained.");
+    }
+    return {};
 }
 
-void AsyncServer::event_loop() {
-#ifndef __EMSCRIPTEN__
-    while (is_running_) {
+void AsyncServer::event_loop(std::stop_token stoken) {
+    while (!stoken.stop_requested()) {
         // Native non-blocking poll loop placeholder
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-#endif
 }
 
 } // namespace net

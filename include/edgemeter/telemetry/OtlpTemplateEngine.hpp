@@ -2,17 +2,16 @@
 #define OTLP_TEMPLATE_HPP
 
 #include <string>
-#include <map>
+#include <string_view>
 #include <inja/inja.hpp>
 #include <nlohmann/json.hpp>
-#include "../core/Config.hpp"
+#include <edgemeter/core/Config.hpp>
+#include <span>
+#include <edgemeter/telemetry/SystemMetrics.hpp>
 
 namespace telemetry {
 
-// Purely statically binds the rendering paths isolating templating contexts completely!
-class OtlpTemplateEngine {
-    // Encapsulate the raw exact OTLP JSON structured template formatting safely internally:
-    static inline const std::string otlp_json_template = R"({
+constexpr const char* otlp_json_template = R"({
   "resourceMetrics": [
     {
       "resource": {
@@ -51,22 +50,25 @@ class OtlpTemplateEngine {
   ]
 })";
 
+class OtlpTemplateEngine {
 public:
-    static std::string render_payload(const core::Config& config, const std::string& name, double value, const std::map<std::string, std::string>& attrs) {
+    static std::string render_payload(const core::Config& config, std::string_view name, double value, std::span<const sys::Attribute> attrs) {
         inja::Environment env;
         nlohmann::json data;
-        
-        data["program_name"] = config.program_name;
-        data["hostname"] = config.hostname;
-        data["cpp_version"] = config.cpp_version;
-        data["tls_version"] = config.tls_version;
-        
-        data["metric_name"] = name;
+
+        data["program_name"] = config.app.program_name;
+        data["hostname"]     = config.app.hostname;
+        data["cpp_version"]  = config.app.cpp_version;
+        // tls.version is "" for Plain builds (default) — render as "none".
+        // Secure builds carry the negotiated version string set by the caller.
+        data["tls_version"]  = config.tls.version.empty() ? "none" : config.tls.version;
+
+        data["metric_name"]  = name;
         data["metric_value"] = value;
-        
+
         nlohmann::json attr_array = nlohmann::json::array();
-        for (const auto& kv : attrs) {
-            attr_array.push_back({{"key", kv.first}, {"val", kv.second}});
+        for (const auto& attr : attrs) {
+            attr_array.push_back({{"key", attr.key}, {"val", attr.val}});
         }
         data["attributes"] = attr_array;
 

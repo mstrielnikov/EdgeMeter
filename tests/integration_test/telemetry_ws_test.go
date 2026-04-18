@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
-func runWSTest(t *testing.T, expectedTLS bool, makeFlags []string) {
+func runWSTest(t *testing.T, expectedTLS bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -37,7 +37,7 @@ func runWSTest(t *testing.T, expectedTLS bool, makeFlags []string) {
 			}
 
 			metrics, err := new(pmetric.JSONUnmarshaler).UnmarshalMetrics(msg)
-			if err == nil && metrics.ResourceMetrics().Len() > 0 {
+			if err == nil && validateAnyOTLPMetric(t, metrics) {
 				select {
 				case successCh <- true:
 				default:
@@ -65,9 +65,9 @@ func runWSTest(t *testing.T, expectedTLS bool, makeFlags []string) {
 }
 
 func TestWebSockets_NoTLS(t *testing.T) {
-	runWSTest(t, false, []string{"USE_WEBSOCKETS=1", "USE_GRPC=0", "USE_NATS=0", "USE_TLS=0"})
+	runWSTest(t, false)
 }
 
 func TestWebSockets_TLS(t *testing.T) {
-	runWSTest(t, true, []string{"USE_WEBSOCKETS=1", "USE_GRPC=0", "USE_NATS=0", "USE_TLS=1"})
+	runWSTest(t, true)
 }
