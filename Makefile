@@ -1,191 +1,163 @@
-# EdgeMeter Makefile
+# EdgeMeter SDK — Makefile
+#
+# SDK library objects are compiled from src/ (excluding nothing — there is no main.cpp).
+# Each example is compiled separately and linked with the SDK objects.
+#
+# Usage:
+#   make http_otlp            # Build HTTP/OTLP agent (TLS off by default)
+#   make http_otlp USE_TLS=1  # Build HTTP/OTLP agent with TLS
+#   make ws_otlp              # Build WebSocket/OTLP agent
+#   make ws_otlp USE_TLS=1
+#   make nats_otlp            # Build NATS/OTLP agent
+#   make nats_otlp USE_TLS=1
+#   make all                  # Build all three agents (no TLS)
+#   make test                 # Run full integration matrix
 
-CXX ?= g++
-CXXFLAGS = -std=c++2a -Wall -Wextra -pthread
-LDFLAGS = -pthread
+CXX      ?= g++
+CXXFLAGS = -std=c++23 -Wall -Wextra -pthread
+LDFLAGS  = -pthread
 
 # Directories
-SRC_DIR = src
-OBJ_DIR = obj
-BIN_DIR = bin
+SRC_DIR  = src
+OBJ_DIR  = obj
+BIN_DIR  = bin
+EX_DIR   = examples
 
-# Vcpkg Dependency Isolation
-VCPKG_ROOT ?= ./.vcpkg
-VCPKG_EXEC = $(VCPKG_ROOT)/vcpkg
-VCPKG_TRIPLET = x64-linux
+# Vcpkg
+VCPKG_ROOT    ?= ./.vcpkg
+VCPKG_TRIPLET ?= x64-linux
+INCLUDES = -Iinclude -I$(SRC_DIR) -I$(VCPKG_ROOT)/installed/$(VCPKG_TRIPLET)/include
+LIBS     = -L$(VCPKG_ROOT)/installed/$(VCPKG_TRIPLET)/lib
 
-# Provide default include and lib paths based on vcpkg installation
-INCLUDES = -I$(VCPKG_ROOT)/installed/$(VCPKG_TRIPLET)/include
-LIBS = -L$(VCPKG_ROOT)/installed/$(VCPKG_TRIPLET)/lib
-
-# Feature Flags
-USE_TLS ?= 1
-USE_GRPC ?= 1
-USE_WEBSOCKETS ?= 1
-USE_NATS ?= 0
-
-# WASM Override defaults: Emscripten doesn't natively handle gRPC or native openSSL without complex wrappers
-ifeq ($(CXX), emcc)
-    USE_GRPC = 0
-    USE_TLS = 0
-    # NATS POSIX TCP sockets inherently bridge across Emscripten natively without native TLS!
-    USE_WEBSOCKETS = 1
-    VCPKG_TRIPLET = wasm32-emscripten
-    CXXFLAGS += -s WASM=1 -s ASYNCIFY=1
-endif
-
+# TLS toggle — exposed strictly for example binaries
+USE_TLS ?= 0
 ifeq ($(USE_TLS), 1)
     CXXFLAGS += -DUSE_TLS
-    LIBS += -lssl -lcrypto
 endif
 
-ifeq ($(USE_GRPC), 1)
-    CXXFLAGS += -DUSE_GRPC
-endif
+# Always link OpenSSL natively because the SDK library compiled components
+# are now structurally decoupled and permanently retain Secure TLS capabilities.
+LIBS += -lssl -lcrypto
 
-ifeq ($(USE_WEBSOCKETS), 1)
-    CXXFLAGS += -DUSE_WEBSOCKETS
-endif
+# --- SDK library objects (all .cpp under src/) ---
+LIB_SRCS = $(shell find $(SRC_DIR) -name '*.cpp')
+LIB_OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/sdk/%.o,$(LIB_SRCS))
 
-ifeq ($(USE_NATS), 1)
-    CXXFLAGS += -DUSE_NATS
-endif
+$(OBJ_DIR)/sdk/%.o: $(SRC_DIR)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-# Source Files
-SRCS = $(shell find $(SRC_DIR) -name '*.cpp')
-OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRCS))
-TARGET = $(BIN_DIR)/EdgeMeter
+# --- Example helpers ---
+define BUILD_EXAMPLE
+$(BIN_DIR)/$(1): $(LIB_OBJS) $(EX_DIR)/$(2)/main.cpp
+	@mkdir -p $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(EX_DIR)/$(2)/main.cpp $(LIB_OBJS) -o $$@ $(LIBS) $(LDFLAGS)
+endef
 
-.PHONY: all clean vcpkg_bootstrap certs service test_ws test_ws_tls test_grpc test_grpc_tls test_nats test_nats_tls test
+$(eval $(call BUILD_EXAMPLE,http_otlp_agent,http_otlp))
+$(eval $(call BUILD_EXAMPLE,ws_otlp_agent,websocket_otlp))
+$(eval $(call BUILD_EXAMPLE,nats_otlp_agent,nats_otlp))
 
-all: $(TARGET)
+# Convenience aliases
+http_otlp:  $(BIN_DIR)/http_otlp_agent
+ws_otlp:    $(BIN_DIR)/ws_otlp_agent
+nats_otlp:  $(BIN_DIR)/nats_otlp_agent
 
+all: http_otlp ws_otlp nats_otlp
+
+.PHONY: all http_otlp ws_otlp nats_otlp clean certs service \
+        test_ws test_ws_tls test_grpc test_grpc_tls test_nats test_nats_tls test
+
+# --- Certificates ---
 certs:
 	@mkdir -p certs
-	openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.crt -days 365 -nodes -subj "/CN=localhost"
+	openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.crt \
+	    -days 365 -nodes -subj "/CN=localhost"
 
+# --- Systemd service ---
 service:
-	@echo "Installing TelemetryAgent.service to /etc/systemd/system/"
-	cp TelemetryAgent.service /etc/systemd/system/
+	@echo "Installing EdgeMeter.service to /etc/systemd/system/"
+	cp EdgeMeter.service /etc/systemd/system/
 	systemctl daemon-reload
+
+# ─── Integration tests ───────────────────────────────────────────────────────
+# Each test target builds the relevant agent binary for the right TLS flag,
+# launches it, runs the Go integration test, then tears it down.
+
+define RUN_TEST
+	fuser -k 8080/tcp 2>/dev/null || true
+	fuser -k 4317/tcp 2>/dev/null || true
+	fuser -k 4222/tcp 2>/dev/null || true
+	killall -q http_otlp_agent ws_otlp_agent nats_otlp_agent 2>/dev/null || true
+endef
 
 test_ws:
 	@echo "=== Testing WebSockets natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=1 USE_GRPC=0 USE_NATS=0 USE_TLS=0 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) ws_otlp USE_TLS=0
+	./bin/ws_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
 	cd tests/integration_test && go test -v -run TestWebSockets_NoTLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test_ws_tls:
 	@echo "=== Testing WebSockets TLS natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=1 USE_GRPC=0 USE_NATS=0 USE_TLS=1 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) ws_otlp USE_TLS=1
+	./bin/ws_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
 	cd tests/integration_test && go test -v -run TestWebSockets_TLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test_grpc:
-	@echo "=== Testing gRPC HTTP natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
+	@echo "=== Testing HTTP/OTLP natively ==="
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=0 USE_GRPC=1 USE_NATS=0 USE_TLS=0 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) http_otlp USE_TLS=0
+	./bin/http_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
-	cd tests/integration_test && go test -v -run TestGRPC_NoTLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	cd tests/integration_test && go test -v -run TestHttp_NoTLS; \
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test_grpc_tls:
-	@echo "=== Testing gRPC TLS natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
+	@echo "=== Testing HTTP/OTLP TLS natively ==="
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=0 USE_GRPC=1 USE_NATS=0 USE_TLS=1 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) http_otlp USE_TLS=1
+	./bin/http_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
-	cd tests/integration_test && go test -v -run TestGRPC_TLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	cd tests/integration_test && go test -v -run TestHttp_TLS; \
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test_nats:
 	@echo "=== Testing NATS TCP natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=0 USE_GRPC=0 USE_NATS=1 USE_TLS=0 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) nats_otlp USE_TLS=0
+	./bin/nats_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
 	cd tests/integration_test && go test -v -run TestNATS_NoTLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test_nats_tls:
 	@echo "=== Testing NATS TLS natively ==="
-	fuser -k 8080/tcp 2>/dev/null || true
-	fuser -k 4317/tcp 2>/dev/null || true
-	fuser -k 4222/tcp 2>/dev/null || true
-	killall -q EdgeMeter || true
 	$(MAKE) clean
-	$(MAKE) USE_WEBSOCKETS=0 USE_GRPC=0 USE_NATS=1 USE_TLS=1 -j4
-	./bin/EdgeMeter & AGENT_PID=$$!; \
+	$(MAKE) nats_otlp USE_TLS=1
+	./bin/nats_otlp_agent & AGENT_PID=$$!; \
 	sleep 2; \
 	cd tests/integration_test && go test -v -run TestNATS_TLS; \
-	TEST_RES=$$?; \
-	kill $$AGENT_PID || true; \
-	wait $$AGENT_PID 2>/dev/null || true; \
-	exit $$TEST_RES
+	TEST_RES=$$?; kill $$AGENT_PID || true; wait $$AGENT_PID 2>/dev/null || true; exit $$TEST_RES
 
 test: test_ws test_ws_tls test_grpc test_grpc_tls test_nats test_nats_tls
 	@echo "=== ✓ All Component Integration Tests Passed Matrix Identically ==="
 
-$(TARGET): $(OBJS)
-	@mkdir -p $(BIN_DIR)
-	$(CXX) $(OBJS) -o $@ $(INCLUDES) $(LIBS) $(LDFLAGS)
-
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
-
+# --- Vcpkg bootstrap ---
 vcpkg_bootstrap:
 	if [ ! -d "$(VCPKG_ROOT)" ]; then \
 		git clone https://github.com/microsoft/vcpkg.git $(VCPKG_ROOT) && \
 		$(VCPKG_ROOT)/bootstrap-vcpkg.sh -disableMetrics; \
 	fi
-	$(VCPKG_EXEC) install inja nlohmann-json --triplet $(VCPKG_TRIPLET)
-	@echo "Notice: Execute vcpkg_grpc manually to compile full opentelemetry bindings."
+	$(VCPKG_ROOT)/vcpkg install inja nlohmann-json --triplet $(VCPKG_TRIPLET)
 
 vcpkg_grpc:
-	$(VCPKG_EXEC) install opentelemetry-cpp[grpc,metrics] openssl --triplet $(VCPKG_TRIPLET)
+	$(VCPKG_ROOT)/vcpkg install opentelemetry-cpp[grpc,metrics] openssl --triplet $(VCPKG_TRIPLET)
 
 clean:
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
