@@ -1,82 +1,81 @@
 # EdgeMeter
 
-A modern, ultra-lightweight **Universal Metric Connector** written in **C++20**.
+EdgeMeter is a lightweight **Universal Metric Connector SDK** implemented in C++20/23. It provides a C-ABI compatible interface to define and collect hardware metrics from edge devices (eBPF, GPU, FPGA and other hardware accelerators) and export them to observability sinks in multi-cloud, hybrid and edge environments in OTLP format supporting HTTP, NATS and WebSockets optionally with TLS.
 
-## Purpose
+See [examples](examples/)
 
-EdgeMeter is purpose-built to securely extract and normalize observability metrics across constrained hardware boundaries. It is designed to operate seamlessly on embedded microcontrollers, edge routing nodes, hardware accelerators (GPUs), and plugged FPGAs. It collects physical parameters and emits **OpenTelemetry (OTLP)** JSON metrics destined for observability sinks.
+## Dependencies
 
-Operating independently of Protocol Buffer SDKs, it places an explicit structural focus on portability, minimal memory footprints, continuous cross-cloud mobility, and active memory safety boundaries.
+- **TLS**: `openssl` (optional)
+- **Json**: `inja` + `nlohmann-json`
+- **C++20**: `std::span`, `std::stop_token`, `std::jthread`
+- **C++23**: `std::expected`
 
 ## Key Features
 
-- **Federated & Zero-Trust Ready (TLS 1.3)**: Built natively for highly distributed topologies (Cross-Cloud, CDNs, and Edge routing setups). EdgeMeter optionally enforces **OpenSSL/TLS 1.3** encryption utilizing the **Type-State Pattern**. Unauthenticated sockets resolve static bounds converting into exclusively authorized `TlsConnection<Authenticated>` memory footprints—meaning network reads/writes cannot execute prior to the compiler proving cryptographic authentication.
-- **Strict Decoupled Subsystems**: Logically categorized codebase boundaries (`src/core`, `src/net`, `src/telemetry`) mapping clean interface encapsulations organically.
-- **Dynamic JSON Configuration Layer**: Features a robust, fallback-driven `<nlohmann::json>` configuration architecture abstracting ports, protocol TLS versions, and C++ macro inferences gracefully strictly without requiring hardcoded topology literals!
-- **Rust-Inspired Error Handling**: Purely stripped archaic `try/catch` throw schemas globally utilizing generic monadic `core::Result<T, E>` boundary wrappers preventing edge-crashing stack unwinding.
-- **Universal Portability (WASM)**: Architected utilizing standard generic constraints compiling interchangeably perfectly against low-power Linux Daemons or shifted transparently into WebAssembly (`__EMSCRIPTEN__`) contexts statically easily securely cleanly structurally!
-- **Dynamic Canonical Templating**: Erased large monolithic SDK frameworks dynamically rendering comprehensively standardized OTLP string payloads linearly utilizing extremely fast overhead `Inja` mapping engines seamlessly reliably!
+- Built natively for highly distributed topologies (Cross-Cloud, CDNs, and Edge routing setups). Optionally enforces **OpenSSL/TLS 1.3** encryption utilizing the **Type-State Pattern**. Unauthenticated sockets resolve static bounds converting into exclusively authorized `TlsConnection<Authenticated>` memory footprints—meaning network reads/writes cannot execute prior to the compiler proving cryptographic authentication.
+- Logically categorized codebase boundaries (`src/core`, `src/net`, `src/telemetry`) mapping interface encapsulations.
+- Features a fallback-driven `<nlohmann::json>` configuration architecture abstracting ports, protocol TLS versions, and C++ macro inferences without requiring hardcoded topology literals
+- Purely stripped archaic `try/catch` throw schemas globally utilizing generic `core::Result<T, E>` boundary wrappers preventing edge-crashing stack unwinding.
 
 ## Unified Pipeline Exports
 
-The telemetry observer internally manages flexible network configurations selectively emitting localized schema formats passively securely based exclusively on compile-time targets:
+The telemetry observer internally manages flexible network configurations emitting localized schema formats based on compile-time targets:
 
-1. **Native NATS PubSub (`USE_NATS=1`)**: Broadcasts heavily optimized raw TCP payload interactions natively binding into Canonical message passing topologies (e.g., `telemetry.metrics.otlp`). Delivers extreme horizontal scalability universally matched for IoT and Edge routing paradigms.
-2. **WebSockets (`USE_WEBSOCKETS=1`)**: Broadcasts generic JSON frames securely parsed as Canonical OTLP schema objects. Operates identically securely natively mapping unmasked connections internally or shifting perfectly natively across native Browser WASM deployments dynamically.
-3. **HTTP/gRPC OTLP (`USE_GRPC=1`)**: Rapidly formulates internal TCP socket `POST /v1/metrics` payload interactions reliably streaming standard JSON array chunks explicitly natively without requiring extensive library links appropriately efficiently!
+1. **Native NATS (`nats_otlp`)**: Broadcasts heavily optimized raw TCP payload interactions natively binding into Canonical message passing topologies (e.g., `telemetry.metrics.otlp`). Delivers extreme horizontal scalability universally matched for IoT and Edge routing paradigms.
+2. **WebSockets (`ws_otlp`)**: Broadcasts generic JSON/OTLP frames natively mapping unmasked connections.
+3. **HTTP (1.0/2.0/3.0) OTLP Exporter (`http_otlp`)**: Formulates strict, highly scalable TCP `POST /v1/metrics` payloads explicitly targeting HTTP/1.0, HTTP/2.0, and HTTP/3.0 (TODO) observability sinks natively. Purpose-built to securely bridge robust federated networking architectures.
 
 ## Compilation Scenarios & Topologies
 
 The build target utilizes dynamic environment toggles structurally adapting exactly to constrained limits.
 
 ```bash
-# General Bootstrap: Install dynamic JSON/Inja templates (Run explicitly once natively)
+# General Bootstrap: Install dynamic JSON/Inja templates (Run once)
 make vcpkg_bootstrap
 
 # General Bootstrap: Dynamically generate ad-hoc 4096-bit RSA OpenSSL TLS configurations
 make certs
 ```
 
-Below are strictly supported compilation paths architected spanning microcontrollers toward standard federated datacenters:
+Below are strictly supported compilation paths architected spanning microcontrollers toward standard datacenters:
 
-### 1. Federated Networks & Zero-Trust (TLS + NATS + OTLP)
+### 1. Federated Networks (TLS + NATS + OTLP)
 
-Ideally structured for multi-cloud deployments where distributed edge endpoints actively broadcast cryptographically verified generic payloads safely gracefully spanning global boundaries.
+Ideally structured for multi-cloud deployments where distributed edge endpoints broadcast generic payloads spanning global HTTP, NATS, or WebSocket boundaries.
 
 ```bash
-make USE_NATS=1 USE_GRPC=1 USE_TLS=1
+make http_otlp USE_TLS=1
+make ws_otlp USE_TLS=1
+make nats_otlp USE_TLS=1
 ```
 
-### 2. Embedded & Constrained Environments (NATS Only)
+### 2. Embedded & Constrained Environments (TCP/NATS)
 
-Designed formally targeting microcontrollers, embedded sensors, or raw FPGA pipelines actively dropping explicit heavy HTTP/gRPC wrapping securely streaming standard pure TCP signals directly.
+Designed formally targeting microcontrollers, embedded sensors, or raw FPGA pipelines actively dropping heavy HTTP wrapping, streaming standard pure TCP signals directly via NATS.
 
 ```bash
-make USE_NATS=1 USE_GRPC=0 USE_WEBSOCKETS=0 USE_TLS=0
+make nats_otlp USE_TLS=0
 ```
 
-### 3. Edge CDN & WebAssembly Runtimes (WASM via WebSockets & NATS)
+### 3. Build Full Integration Pipeline
 
-Shifts the identical observability metrics mapping framework directly inside memory constrained browser pipelines or wasm runtimes. Emscripten's native POSIX bounds bridge NATS unencrypted pipelines logically accurately cleanly.
-
-```bash
-make CXX=emcc USE_WEBSOCKETS=1 USE_NATS=1 USE_GRPC=0 USE_TLS=0 # either WebSockets or NATS (without TLS) works natively in WASM
-```
-
-### 4. Standard Omnipresent Linux Daemon (All Toggles Active)
-
-Binds every canonical framework simultaneously routing generic identical observer limits exactly!
+Compiles every example agent target strictly for unauthenticated generic routing configurations natively.
 
 ```bash
-make USE_NATS=1 USE_GRPC=1 USE_WEBSOCKETS=1 USE_TLS=0
-# Optional: Register explicitly alongside systemd limits!
-sudo make service
+make all
+# Run automated validation logic integrating against Go integration tests
+make test
 ```
 
 ## Planned Features & Hardware Integration
 
-EdgeMeter aims to dramatically expand its telemetry observational limits across physical topologies. Future hardware integrations will directly map localized hardware states explicitly into our C++20 OTLP bounds:
+EdgeMeter aims to dramaticall y expand its telemetry observational limits across physical topologies. Future hardware integrations will directly map localized hardware states explicitly into our C++23 OTLP bounds:
 
-- **GPU Analytics**: Dedicated observers mapping NVML boundaries directly into OTLP pipelines.
-- **eBPF Tracing**: Deep Linux kernel observers wrapping raw syscall limits bypassing `/proc` bottlenecks for true high frequency granular OS networking metrics.
+- **GPU Analytics**: Dedicated observers mapping NVML/ROCm boundaries directly into OTLP pipelines.
+- **eBPF Tracing**: Deep Linux kernel observers wrapping raw syscall limits bypassing `/proc` bottlenecks for true high frequency granular OS networking metrics and WASM runtimes.
 - **FPGA Integrations**: Formal abstractions routing physical logic arrays strictly into identical JSON bounds natively capturing gate metrics locally.
+- Additional network protocols: QUIC (as modern HTTP/3 option with TLS 1.3), gRPC (HTTP/2 based option and OTLP native option)
+- Sreaming over Wireguard for true cross-cloud / hybrid support
+- Additional telemetry sources: MQTT (as lightweight messaging protocol for IoT and edge devices), AMQP (as robust messaging protocol for enterprise applications)
+- Alternative builds for cryptographic libraries: mbedtls, wolfssl targeting either QUIC or PQC TLS 1.3 supprot

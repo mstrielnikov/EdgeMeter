@@ -4,6 +4,7 @@ obj/
 
 # Local Package Manager
 .vcpkg/
+# Makefile.sandbox
 
 # Secrets & Private Keys
 certs/
@@ -13,3 +14,7 @@ certs/
 # IDEs
 .idea/
 .vscode/
+
+# Toolchains
+.toolchain/
+build/
